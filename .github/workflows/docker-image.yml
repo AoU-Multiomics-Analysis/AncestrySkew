@@ -1,10 +1,10 @@
 name: Docker Image CI
 
 on:
-  #push:
-  #  branches: [ "main" ]
-  pull_request:
+  push:
     branches: [ "main" ]
+  #pull_request:
+  #  branches: [ "main" ]
 
 jobs:
   build_and_push:
@@ -35,6 +35,6 @@ jobs:
         with:
           context: .
           file: ./envs/Dockerfile
-          push: False 
+          push: True 
           tags: |
             ${{ steps.meta.outputs.tags }}
