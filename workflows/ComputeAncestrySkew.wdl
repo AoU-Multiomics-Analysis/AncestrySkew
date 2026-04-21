@@ -27,7 +27,7 @@ task GetAncestrySkew {
     command <<< 
     Rscript /tmp/ComputeAncestrySkew.R \
        --AnnotationData ~{AnnotationData} \
-       --OuputFile ~{OutputFile}
+       --OutputFile ~{OutputFile}
     >>>
     
     runtime {
