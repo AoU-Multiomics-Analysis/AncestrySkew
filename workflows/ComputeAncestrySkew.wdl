@@ -31,7 +31,7 @@ task GetAncestrySkew {
     >>>
     
     runtime {
-        docker: "ghcr.io/aou-multiomics-analysis/computeancestryskew:main"
+        docker: "ghcr.io/aou-multiomics-analysis/ancestryskew:main"
         memory: "96G"
         cpu: 2
         disks: "local-disk 2500 SSD"
