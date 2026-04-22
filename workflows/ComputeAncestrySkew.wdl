@@ -98,8 +98,8 @@ task ShardVariants {
     }
     runtime {
         docker: "python:3.10"
-        memory: "64G"
-        cpu: 2
+        memory: "32G"
+        cpu: 1
         disks: "local-disk 2500 SSD"
   }
 }
