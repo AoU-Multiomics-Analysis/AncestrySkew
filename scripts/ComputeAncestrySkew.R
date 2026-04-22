@@ -6,13 +6,14 @@ library(optparse)
 option_list <- list(
     optparse::make_option(c("--AnnotationData"), type="character", default=NULL,
                         help="Annotation data for variants containing ancestry specific AC/AN and cohort level AC/AN", metavar = "type"),
-    optparse::make_option(c("--OutputFile"), type="character", default=NULL,
+    optparse::make_option(c("--OutputPrefix"), type="character", default=NULL,
                         help="Output file name", metavar = "type")
 )
 
 opt <- optparse::parse_args(optparse::OptionParser(option_list=option_list))
 AnnotationPath <- opt$AnnotationData 
-OutputFileName <- opt$OutputFile
+OutputPrefix <- opt$OutputPrefix
+OutputName <- paste0(opt$OutputPrefix, ".AncestrySkew.tsv.gz")
 
 ####### LOAD DATA ########
 AnnotationDf <- fread(AnnotationPath)
