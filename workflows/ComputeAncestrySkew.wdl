@@ -65,7 +65,7 @@ task ShardVariants {
     shard_paths = []
 
     def open_shard(idx):
-        path = f"shards/{out_prefix}.shard_{idx:04d}.tsv"
+        path = f"shards/shard_{idx:04d}.tsv"
         handle = open(path, "w", newline="")
         w = csv.DictWriter(handle, fieldnames=header, delimiter="\t")
         w.writeheader()
@@ -91,8 +91,7 @@ task ShardVariants {
     with open("shard_manifest.json", "w") as f:
         json.dump(shard_paths, f)
     PY
-    >>>
-
+    >>>    
     output {
       Array[File] shard_files = glob("shards/*.tsv")
       File manifest = "shard_manifest.json"
