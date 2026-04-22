@@ -38,4 +38,4 @@ res <- apply(SkewInput[,c("gvs_max_ac","gvs_max_an","gvs_ac_skew_input","gvs_an_
 
 # merge results 
 merged <- cbind(SkewInput, t(res))
-merged %>% write_tsv(OutputFileName)
+merged %>% write_tsv(OutputName)
