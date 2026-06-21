@@ -7,6 +7,7 @@ workflow ComputeAncestrySkew {
         Int VariantsPerShard
         Float PipThreshold = 0.9
         String AdmixedSubpops = "oth"
+        Boolean KeepInputColumns = false
     }
     
     call ShardVariants {
@@ -20,7 +21,8 @@ workflow ComputeAncestrySkew {
             input:
                 AnnotationData = shard,
                 PipThreshold = PipThreshold,
-                AdmixedSubpops = AdmixedSubpops
+                AdmixedSubpops = AdmixedSubpops,
+                KeepInputColumns = KeepInputColumns
         }
     }
     
@@ -118,6 +120,7 @@ task GetAncestrySkew {
         File AnnotationData
         Float PipThreshold
         String AdmixedSubpops
+        Boolean KeepInputColumns
     }
     String shard_base = basename(AnnotationData, ".tsv")
 
@@ -127,7 +130,8 @@ task GetAncestrySkew {
        --AnnotationData ~{AnnotationData} \
        --OutputPrefix ~{shard_base} \
        --PipThreshold ~{PipThreshold} \
-       --AdmixedSubpops "~{AdmixedSubpops}"
+       --AdmixedSubpops "~{AdmixedSubpops}" \
+       ~{if KeepInputColumns then "--KeepInputColumns" else ""}
     >>>
     
     runtime {

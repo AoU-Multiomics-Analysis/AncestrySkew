@@ -10,7 +10,9 @@ option_list <- list(
     optparse::make_option(c("--PipThreshold"), type = "double", default = 0.9,
                         help = "Minimum PIP threshold used to select variants [default %default]", metavar = "number"),
     optparse::make_option(c("--AdmixedSubpops"), type = "character", default = "oth",
-                        help = "Comma-separated GVS subpopulation labels to remove for the no-admixed skew calculation [default %default]", metavar = "string")
+                        help = "Comma-separated GVS subpopulation labels to remove for the no-admixed skew calculation [default %default]", metavar = "string"),
+    optparse::make_option(c("--KeepInputColumns"), action = "store_true", default = FALSE,
+                        help = "Keep all input annotation columns and append ancestry skew columns [default %default]")
 )
 
 opt <- optparse::parse_args(optparse::OptionParser(option_list = option_list))
@@ -31,6 +33,7 @@ AdmixedSubpops <- opt$AdmixedSubpops %>%
     str_trim() %>%
     str_to_lower()
 AdmixedSubpops <- AdmixedSubpops[AdmixedSubpops != ""]
+KeepInputColumns <- opt$KeepInputColumns
 
 required_columns <- c("variant", "pip", "gvs_all_ac", "gvs_all_an")
 
@@ -80,6 +83,7 @@ choose_max_subpop <- function(df, subpops, prefix) {
     max_subpop_col <- paste0(prefix, "_max_subpop")
 
     df_with_ids <- df %>%
+        select(-any_of(c(max_subpop_col, max_maf_col))) %>%
         mutate(.row_id = row_number())
 
     max_subpop_by_row <- df_with_ids %>%
@@ -108,9 +112,11 @@ add_max_counts <- function(df, prefix) {
     max_subpop_col <- paste0(prefix, "_max_subpop")
     max_ac_col <- paste0(prefix, "_max_ac")
     max_an_col <- paste0(prefix, "_max_an")
-    count_cols <- names(df) %>% keep(~ str_detect(.x, "^gvs_[^_]+_(ac|an)$"))
+    df_without_existing <- df %>%
+        select(-any_of(c(max_ac_col, max_an_col)))
+    count_cols <- names(df_without_existing) %>% keep(~ str_detect(.x, "^gvs_[^_]+_(ac|an)$"))
 
-    df_with_ids <- df %>%
+    df_with_ids <- df_without_existing %>%
         mutate(.row_id = row_number()) %>%
         select(.row_id, all_of(max_subpop_col), all_of(count_cols))
 
@@ -123,7 +129,7 @@ add_max_counts <- function(df, prefix) {
         filter(subpop == .data[[max_subpop_col]]) %>%
         transmute(.row_id, !!max_ac_col := ac, !!max_an_col := an)
 
-    df %>%
+    df_without_existing %>%
         mutate(.row_id = row_number()) %>%
         left_join(max_counts_by_row, by = ".row_id") %>%
         select(-.row_id)
@@ -240,7 +246,6 @@ OutputColumns <- c(
 # Keep only variants at or above the requested PIP threshold, then create MAF
 # columns for every GVS ancestry-specific AF column.
 SkewInput <- AnnotationDf %>%
-    select(variant, all_of(numeric_cols)) %>%
     mutate(across(all_of(numeric_cols), ~ as.numeric(.))) %>%
     filter(pip >= PipThreshold) %>%
     mutate(across(all_of(af_cols), maf, .names = "{.col}_maf"))
@@ -250,7 +255,11 @@ names(SkewInput)[match(maf_col_names, names(SkewInput))] <- paste0("gvs_", subpo
 
 if (nrow(SkewInput) == 0) {
     warning("No variants passed the PIP threshold; writing an empty output.")
-    empty_output <- as_tibble(setNames(replicate(length(OutputColumns), logical(0), simplify = FALSE), OutputColumns))
+    empty_columns <- OutputColumns
+    if (KeepInputColumns) {
+        empty_columns <- c(names(AnnotationDf), setdiff(OutputColumns, names(AnnotationDf)))
+    }
+    empty_output <- as_tibble(setNames(replicate(length(empty_columns), logical(0), simplify = FALSE), empty_columns))
     empty_output %>% write_tsv(OutputName)
     quit(save = "no", status = 0)
 }
@@ -295,6 +304,13 @@ SkewInput <- SkewInput %>%
     add_background_counts("gvs_no_admixed", "gvs_no_admixed_all_ac", "gvs_no_admixed_all_an") %>%
     run_fisher("gvs_no_admixed")
 
-SkewInput %>%
-    select(all_of(OutputColumns)) %>%
+OutputDf <- SkewInput %>%
+    select(all_of(OutputColumns))
+
+if (KeepInputColumns) {
+    OutputDf <- SkewInput %>%
+        select(all_of(names(AnnotationDf)), all_of(setdiff(OutputColumns, names(AnnotationDf))))
+}
+
+OutputDf %>%
     write_tsv(OutputName)

@@ -17,6 +17,7 @@ The script also reports a second ancestry skew calculation with admixed samples 
 | `VariantsPerShard` | `Int` | required | Number of input rows per shard. |
 | `PipThreshold` | `Float` | `0.9` | Variants with `pip >= PipThreshold` are included. |
 | `AdmixedSubpops` | `String` | `"oth"` | Comma-separated GVS subpopulation labels to remove for the no-admixed skew calculation. |
+| `KeepInputColumns` | `Boolean` | `false` | Keep all input annotation columns and append ancestry skew columns. |
 
 Example Cromwell-style inputs:
 
@@ -26,7 +27,8 @@ Example Cromwell-style inputs:
   "ComputeAncestrySkew.OutputFile": "AncestrySkew.tsv.gz",
   "ComputeAncestrySkew.VariantsPerShard": 50000,
   "ComputeAncestrySkew.PipThreshold": 0.9,
-  "ComputeAncestrySkew.AdmixedSubpops": "oth"
+  "ComputeAncestrySkew.AdmixedSubpops": "oth",
+  "ComputeAncestrySkew.KeepInputColumns": false
 }
 ```
 
@@ -70,7 +72,8 @@ Rscript scripts/ComputeAncestrySkew.R \
   --AnnotationData annotations.tsv.gz \
   --OutputPrefix output/annotations \
   --PipThreshold 0.9 \
-  --AdmixedSubpops oth
+  --AdmixedSubpops oth \
+  --KeepInputColumns
 ```
 
 This writes `output/annotations.AncestrySkew.tsv.gz`.
