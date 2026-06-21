@@ -126,7 +126,7 @@ task GetAncestrySkew {
 
     command <<< 
 
-    Rscript /tmp/ComputeAncestrySkew.R \
+    Rscript /ComputeAncestrySkew.R \
        --AnnotationData ~{AnnotationData} \
        --OutputPrefix ~{shard_base} \
        --PipThreshold ~{PipThreshold} \
