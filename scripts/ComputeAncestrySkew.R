@@ -34,7 +34,8 @@ AdmixedSubpops <- AdmixedSubpops[AdmixedSubpops != ""]
 
 required_columns <- c("variant", "pip", "gvs_all_ac", "gvs_all_an")
 
-####### HELPERS ########
+# Convert allele frequency to minor allele frequency before choosing the max
+# subpopulation. This fixes older annotations where max subpop was based on AF.
 maf <- function(af) {
     pmin(af, 1 - af)
 }
@@ -78,40 +79,54 @@ choose_max_subpop <- function(df, subpops, prefix) {
     max_maf_col <- paste0(prefix, "_max_maf")
     max_subpop_col <- paste0(prefix, "_max_subpop")
 
-    maf_matrix <- as.matrix(df[, maf_cols, drop = FALSE])
-    max_idx <- apply(maf_matrix, 1, function(row) {
-        if (all(is.na(row))) {
-            return(NA_integer_)
-        }
-        which.max(replace(row, is.na(row), -Inf))
-    })
+    df_with_ids <- df %>%
+        mutate(.row_id = row_number())
 
-    df[[max_maf_col]] <- ifelse(
-        is.na(max_idx),
-        NA_real_,
-        maf_matrix[cbind(seq_len(nrow(maf_matrix)), max_idx)]
-    )
-    df[[max_subpop_col]] <- ifelse(is.na(max_idx), NA_character_, subpops[max_idx])
-    df
+    max_subpop_by_row <- df_with_ids %>%
+        select(.row_id, all_of(maf_cols)) %>%
+        pivot_longer(
+            cols = all_of(maf_cols),
+            names_to = "maf_column",
+            values_to = max_maf_col
+        ) %>%
+        mutate(!!max_subpop_col := get_subpop_from_af_col(str_remove(maf_column, "_maf$"))) %>%
+        filter(!is.na(.data[[max_maf_col]])) %>%
+        slice_max(
+            order_by = .data[[max_maf_col]],
+            n = 1,
+            with_ties = FALSE,
+            by = .row_id
+        ) %>%
+        select(.row_id, all_of(c(max_subpop_col, max_maf_col)))
+
+    df_with_ids %>%
+        left_join(max_subpop_by_row, by = ".row_id") %>%
+        select(-.row_id)
 }
 
 add_max_counts <- function(df, prefix) {
     max_subpop_col <- paste0(prefix, "_max_subpop")
     max_ac_col <- paste0(prefix, "_max_ac")
     max_an_col <- paste0(prefix, "_max_an")
+    count_cols <- names(df) %>% keep(~ str_detect(.x, "^gvs_[^_]+_(ac|an)$"))
 
-    df[[max_ac_col]] <- NA_real_
-    df[[max_an_col]] <- NA_real_
+    df_with_ids <- df %>%
+        mutate(.row_id = row_number()) %>%
+        select(.row_id, all_of(max_subpop_col), all_of(count_cols))
 
-    for (subpop in unique(na.omit(df[[max_subpop_col]]))) {
-        ac_col <- paste0("gvs_", subpop, "_ac")
-        an_col <- paste0("gvs_", subpop, "_an")
-        rows <- df[[max_subpop_col]] == subpop & !is.na(df[[max_subpop_col]])
-        df[[max_ac_col]][rows] <- df[[ac_col]][rows]
-        df[[max_an_col]][rows] <- df[[an_col]][rows]
-    }
+    max_counts_by_row <- df_with_ids %>%
+        pivot_longer(
+            cols = all_of(count_cols),
+            names_to = c("gvs_prefix", "subpop", ".value"),
+            names_pattern = "^(gvs)_([^_]+)_(ac|an)$"
+        ) %>%
+        filter(subpop == .data[[max_subpop_col]]) %>%
+        transmute(.row_id, !!max_ac_col := ac, !!max_an_col := an)
 
-    df
+    df %>%
+        mutate(.row_id = row_number()) %>%
+        left_join(max_counts_by_row, by = ".row_id") %>%
+        select(-.row_id)
 }
 
 add_background_counts <- function(df, prefix, all_ac_col, all_an_col) {
@@ -120,9 +135,11 @@ add_background_counts <- function(df, prefix, all_ac_col, all_an_col) {
     bg_ac_col <- paste0(prefix, "_background_ac")
     bg_an_col <- paste0(prefix, "_background_an")
 
-    df[[bg_ac_col]] <- df[[all_ac_col]] - df[[max_ac_col]]
-    df[[bg_an_col]] <- df[[all_an_col]] - df[[max_an_col]]
-    df
+    df %>%
+        mutate(
+            !!bg_ac_col := .data[[all_ac_col]] - .data[[max_ac_col]],
+            !!bg_an_col := .data[[all_an_col]] - .data[[max_an_col]]
+        )
 }
 
 run_fisher <- function(df, prefix) {
@@ -133,17 +150,31 @@ run_fisher <- function(df, prefix) {
     odds_col <- paste0(prefix, "_odds_ratio")
     p_col <- paste0(prefix, "_p_value")
 
-    res <- apply(df[, c(max_ac_col, max_an_col, bg_ac_col, bg_an_col), drop = FALSE], 1, function(x) {
-        if (any(is.na(x)) || any(x < 0)) {
-            return(c(odds_ratio = NA_real_, p_value = NA_real_))
-        }
-        test <- fisher.test(matrix(x, nrow = 2, byrow = TRUE))
-        c(odds_ratio = unname(test$estimate), p_value = test$p.value)
-    })
+    fisher_result <- function(max_ac, max_an, background_ac, background_an) {
+        values <- c(max_ac, max_an, background_ac, background_an)
 
-    df[[odds_col]] <- as.numeric(res["odds_ratio", ])
-    df[[p_col]] <- as.numeric(res["p_value", ])
-    df
+        if (any(is.na(values)) || any(values < 0)) {
+            return(tibble(odds_ratio = NA_real_, p_value = NA_real_))
+        }
+
+        test <- fisher.test(matrix(values, nrow = 2, byrow = TRUE))
+        tibble(odds_ratio = unname(test$estimate), p_value = test$p.value)
+    }
+
+    df %>%
+        mutate(
+            .fisher = pmap(
+                list(
+                    .data[[max_ac_col]],
+                    .data[[max_an_col]],
+                    .data[[bg_ac_col]],
+                    .data[[bg_an_col]]
+                ),
+                fisher_result
+            )
+        ) %>%
+        unnest_wider(.fisher) %>%
+        rename(!!odds_col := odds_ratio, !!p_col := p_value)
 }
 
 ####### LOAD DATA ########
@@ -206,6 +237,8 @@ OutputColumns <- c(
     removed_count_cols
 )
 
+# Keep only variants at or above the requested PIP threshold, then create MAF
+# columns for every GVS ancestry-specific AF column.
 SkewInput <- AnnotationDf %>%
     select(variant, all_of(numeric_cols)) %>%
     mutate(across(all_of(numeric_cols), ~ as.numeric(.))) %>%
@@ -222,17 +255,36 @@ if (nrow(SkewInput) == 0) {
     quit(save = "no", status = 0)
 }
 
+# Round 1: ancestry skew with admixed samples included.
+#
+# This recomputes the max GVS subpopulation from MAF, looks up that
+# subpopulation's AC/AN, builds the all-other-background counts, and runs the
+# first Fisher test.
 SkewInput <- SkewInput %>%
     choose_max_subpop(subpops, "gvs") %>%
     add_max_counts("gvs") %>%
     add_background_counts("gvs", "gvs_all_ac", "gvs_all_an") %>%
     run_fisher("gvs")
 
-for (subpop in admixed_subpops) {
-    SkewInput[[paste0("gvs_no_admixed_removed_", subpop, "_ac")]] <- SkewInput[[paste0("gvs_", subpop, "_ac")]]
-    SkewInput[[paste0("gvs_no_admixed_removed_", subpop, "_an")]] <- SkewInput[[paste0("gvs_", subpop, "_an")]]
-}
+# Store the admixed AC/AN values that will be subtracted so the output is
+# auditable. By default this is the GVS `oth` subpopulation.
+SkewInput <- reduce(
+    admixed_subpops,
+    .init = SkewInput,
+    .f = function(df, subpop) {
+        df %>%
+            mutate(
+                !!paste0("gvs_no_admixed_removed_", subpop, "_ac") := .data[[paste0("gvs_", subpop, "_ac")]],
+                !!paste0("gvs_no_admixed_removed_", subpop, "_an") := .data[[paste0("gvs_", subpop, "_an")]]
+            )
+    }
+)
 
+# Round 2: ancestry skew after admixed samples are removed.
+#
+# The admixed AC/AN are subtracted from cohort-level AC/AN first. Then the max
+# subpopulation is recalculated from MAF using only the non-admixed
+# subpopulations before running the second Fisher test.
 SkewInput <- SkewInput %>%
     mutate(
         gvs_no_admixed_all_ac = gvs_all_ac - rowSums(across(all_of(paste0("gvs_", admixed_subpops, "_ac"))), na.rm = FALSE),
