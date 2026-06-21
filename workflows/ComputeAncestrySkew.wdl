@@ -4,7 +4,9 @@ workflow ComputeAncestrySkew {
     input {
         File AnnotationData
         String OutputFile
-        Int VariantsPerShard 
+        Int VariantsPerShard
+        Float PipThreshold = 0.9
+        String AdmixedSubpops = "oth"
     }
     
     call ShardVariants {
@@ -16,13 +18,16 @@ workflow ComputeAncestrySkew {
     scatter (shard in ShardVariants.shard_files) {
         call GetAncestrySkew {
             input:
-                AnnotationData = shard
+                AnnotationData = shard,
+                PipThreshold = PipThreshold,
+                AdmixedSubpops = AdmixedSubpops
         }
     }
     
     call AggregateAncestrySkew {
         input:
-            shard_outputs =  GetAncestrySkew.AncestrySkewOutput
+            shard_outputs =  GetAncestrySkew.AncestrySkewOutput,
+            OutputFile = OutputFile
     }
     output {
         File Output = AggregateAncestrySkew.AggregatedOutput
@@ -47,8 +52,12 @@ task ShardVariants {
 
     os.makedirs("shards", exist_ok=True)
 
-    # Open plain TSV or TSV.GZ
-    if infile.endswith(".gz"):
+    def is_gzip(path):
+        with open(path, "rb") as probe:
+            return probe.read(2) == b"\x1f\x8b"
+
+    # Open plain TSV or gzip-compressed TSV, even if the suffix is not .gz.
+    if is_gzip(infile):
         fh = gzip.open(infile, "rt")
     else:
         fh = open(infile, "r")
@@ -107,6 +116,8 @@ task ShardVariants {
 task GetAncestrySkew {
     input {
         File AnnotationData
+        Float PipThreshold
+        String AdmixedSubpops
     }
     String shard_base = basename(AnnotationData, ".tsv")
 
@@ -114,7 +125,9 @@ task GetAncestrySkew {
 
     Rscript /tmp/ComputeAncestrySkew.R \
        --AnnotationData ~{AnnotationData} \
-       --OutputPrefix ~{shard_base}
+       --OutputPrefix ~{shard_base} \
+       --PipThreshold ~{PipThreshold} \
+       --AdmixedSubpops "~{AdmixedSubpops}"
     >>>
     
     runtime {
@@ -133,6 +146,7 @@ task AggregateAncestrySkew {
 
     input {
         Array[File] shard_outputs
+        String OutputFile
     }
 
     command <<<
@@ -147,7 +161,7 @@ task AggregateAncestrySkew {
         else
             zcat "$f" | tail -n +2
         fi
-    done | gzip > AncestrySkew.tsv.gz
+    done | gzip > "~{OutputFile}"
     >>>
     runtime {
         docker: "ghcr.io/aou-multiomics-analysis/ancestryskew:main"
@@ -157,7 +171,6 @@ task AggregateAncestrySkew {
     }
     
     output {
-        File AggregatedOutput = "AncestrySkew.tsv.gz"
+        File AggregatedOutput = OutputFile
     }
 }
-
